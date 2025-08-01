@@ -25,7 +25,6 @@ api_key = os.getenv("GEMINI_API_KEY")
 
 client = genai.Client(api_key=api_key)
 
-
 media_dir = Path("media")
 media_dir.mkdir(exist_ok=True)
 
@@ -76,10 +75,6 @@ def ask_gemini(prompt: Prompt):
     return {"reply": response.text}
 
 
-media_dir = Path("media")
-media_dir.mkdir(exist_ok=True)
-
-
 @app.post("/upload")
 async def upload_files(files: List[UploadFile] = File(...), prompt: str = Form(...)):
     uploaded_files = []
@@ -103,4 +98,46 @@ async def upload_files(files: List[UploadFile] = File(...), prompt: str = Form(.
         )
         return {"reply": response.text}
     except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/analyze-screen")
+async def analyze_screen(screenshot: UploadFile = File(...), prompt: str = Form(...)):
+    try:
+        print(f"Received prompt: {prompt}")
+        print(
+            f"Screenshot file: {screenshot.filename}, content type: {
+                screenshot.content_type}"
+        )
+
+        # Save screenshot temporarily
+        screenshot_path = media_dir / f"screenshot_{screenshot.filename}"
+        with open(screenshot_path, "wb") as f:
+            shutil.copyfileobj(screenshot.file, f)
+
+        print(f"Screenshot saved to: {screenshot_path}")
+
+        # Upload to Gemini
+        uploaded_file = client.files.upload(file=screenshot_path)
+        print(f"File uploaded to Gemini: {uploaded_file}")
+
+        # Generate response with image analysis capabilities
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[
+                uploaded_file,
+                f"Analyze this screenshot and help with: {
+                    prompt}. Focus on any code, errors, UI elements, or technical content visible. Provide specific and actionable advice based on what you can see.",
+            ],
+        )
+
+        # Clean up
+        screenshot_path.unlink()
+
+        return {"reply": response.text}
+    except Exception as e:
+        print(f"Error in analyze_screen: {str(e)}")
+        import traceback
+
+        traceback.print_exc()
         return {"error": str(e)}
