@@ -1,13 +1,15 @@
 import os
 import shutil
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import (Depends, FastAPI, File, Form, Header, HTTPException,
+                     UploadFile)
 from fastapi.middleware.cors import CORSMiddleware
 from google import genai
 from pydantic import BaseModel
+from supabase import Client, create_client
 
 app = FastAPI()
 
@@ -22,8 +24,12 @@ app.add_middleware(
 load_dotenv()
 
 api_key = os.getenv("GEMINI_API_KEY")
+supabase_url = os.getenv("SUPABASE_URL")
+supabase_anon_key = os.getenv("SUPABASE_ANON_KEY")
 
+# Initialize clients
 client = genai.Client(api_key=api_key)
+supabase: Client = create_client(supabase_url, supabase_anon_key)
 
 media_dir = Path("media")
 media_dir.mkdir(exist_ok=True)
@@ -67,8 +73,61 @@ class Prompt(BaseModel):
     text: str
 
 
+class User(BaseModel):
+    id: str
+    email: str
+    name: Optional[str] = None
+    avatar_url: Optional[str] = None
+
+
+# Authentication dependency
+async def get_current_user(authorization: str = Header(None)) -> User:
+    if not authorization:
+        raise HTTPException(
+            status_code=401, detail="Authorization header missing")
+
+    try:
+        # Extract token from "Bearer <token>"
+        token = authorization.replace("Bearer ", "")
+
+        # Get user from Supabase using the token
+        response = supabase.auth.get_user(token)
+        user_data = response.user
+
+        if not user_data:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        return User(
+            id=user_data.id,
+            email=user_data.email,
+            name=user_data.user_metadata.get("full_name"),
+            avatar_url=user_data.user_metadata.get("avatar_url"),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=401, detail=f"Authentication failed: {str(e)}")
+
+
+# Optional authentication (for endpoints that can work with or without auth)
+async def get_current_user_optional(
+    authorization: str = Header(None),
+) -> Optional[User]:
+    if not authorization:
+        return None
+    try:
+        return await get_current_user(authorization)
+    except HTTPException:
+        return None
+
+
+@app.get("/auth/user")
+async def get_user_info(current_user: User = Depends(get_current_user)):
+    """Get current user information"""
+    return {"user": current_user}
+
+
 @app.post("/ask")
-def ask_gemini(prompt: Prompt):
+def ask_gemini(prompt: Prompt, current_user: User = Depends(get_current_user)):
     response = client.models.generate_content(
         model="gemini-2.5-flash", contents=prompt.text
     )
@@ -76,7 +135,11 @@ def ask_gemini(prompt: Prompt):
 
 
 @app.post("/upload")
-async def upload_files(files: List[UploadFile] = File(...), prompt: str = Form(...)):
+async def upload_files(
+    files: List[UploadFile] = File(...),
+    prompt: str = Form(...),
+    current_user: User = Depends(get_current_user),
+):
     uploaded_files = []
 
     for file in files:
@@ -102,7 +165,11 @@ async def upload_files(files: List[UploadFile] = File(...), prompt: str = Form(.
 
 
 @app.post("/analyze-screen")
-async def analyze_screen(screenshot: UploadFile = File(...), prompt: str = Form(...)):
+async def analyze_screen(
+    screenshot: UploadFile = File(...),
+    prompt: str = Form(...),
+    current_user: User = Depends(get_current_user),
+):
     try:
         print(f"Received prompt: {prompt}")
         print(

@@ -1,3 +1,4 @@
 fastapi[standard-no-fastapi-cloud-cli]
 google-genai
 pillow
+supabase
