@@ -177,14 +177,27 @@ async def analyze_screen(
                 screenshot.content_type}"
         )
 
-        # Save screenshot temporarily
-        screenshot_path = media_dir / f"screenshot_{screenshot.filename}"
+        # Save screenshot temporarily with proper extension
+        # Handle case where filename is "blob" or doesn't have extension
+        filename = screenshot.filename
+        if not filename or filename == "blob" or "." not in filename:
+            # Determine extension from content type
+            if screenshot.content_type == "image/png":
+                filename = "screenshot.png"
+            elif screenshot.content_type == "image/jpeg" or screenshot.content_type == "image/jpg":
+                filename = "screenshot.jpg"
+            elif screenshot.content_type == "image/webp":
+                filename = "screenshot.webp"
+            else:
+                filename = "screenshot.png"  # Default to PNG
+        
+        screenshot_path = media_dir / f"screenshot_{filename}"
         with open(screenshot_path, "wb") as f:
             shutil.copyfileobj(screenshot.file, f)
 
         print(f"Screenshot saved to: {screenshot_path}")
 
-        # Upload to Gemini
+        # Upload to Gemini (it will auto-detect MIME type from file extension)
         uploaded_file = client.files.upload(file=screenshot_path)
         print(f"File uploaded to Gemini: {uploaded_file}")
 
